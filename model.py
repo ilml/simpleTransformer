@@ -3,10 +3,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 import math
 
 
-def scaled_dot_product_attention(Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor) -> torch.Tensor:
+def scaled_dot_product_attention(Q: Tensor, K: Tensor, V: Tensor) -> Tensor:
     """
     input size of QKV: (batch_size, seq_len, d_*)
     """
@@ -18,20 +19,7 @@ def scaled_dot_product_attention(Q: torch.Tensor, K: torch.Tensor, V: torch.Tens
     return output
 
 
-class Transformer(torch.nn.Module):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-
-        self.h = 8
-        self.d_model = 1024
-        self.layer = 8
-        self.d_k = self.d_v = self.d_model / self.h 
-    
-    def forward():
-        pass
-
-
-class MultiHeadAttention(torch.nn.Module):
+class MultiHeadAttention(nn.Module):
     def __init__(self, h: int, d_model: int, d_k: int, d_v: int) -> None:
         super().__init__()
         
@@ -51,7 +39,7 @@ class MultiHeadAttention(torch.nn.Module):
         nn.init.xavier_uniform_(self.W_O)
 
 
-    def forward(self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor):
+    def forward(self, Q: Tensor, K: Tensor, V: Tensor) -> Tensor:
         Q_heads = [Q @ self.W_Q[i] for i in range(self.h)]
         K_heads = [K @ self.W_K[i] for i in range(self.h)]
         V_heads = [V @ self.W_V[i] for i in range(self.h)]
@@ -62,3 +50,96 @@ class MultiHeadAttention(torch.nn.Module):
 
         return output
 
+        
+class FeedForward(nn.Module):
+    def __init__(self, d_ff: int, d_model:int) -> None:
+        super().__init__()
+
+        self.ffn_1 =  nn.Linear(in_features=d_model, out_features=d_ff, bias=True)
+        self.ffn_2 =  nn.Linear(in_features=d_ff, out_features=d_model, bias=True)
+        self.activation = nn.Relu()
+
+    def forwar(self, x: Tensor) -> Tensor:
+        x = self.ffn_1(x)
+        x = self.activation(x)
+        x = self.ffn_2(x)
+
+        return x
+
+
+class EncoderBlock(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+
+        self.mha = MultiHeadAttention()
+        self.ffn = FeedForward()
+        self.layer_norm = nn.LayerNorm()
+
+    def forwar(self, x: Tensor) -> Tensor:
+        x = self.layer_norm(self.mha(x, x, x) + x)
+        x = self.layer_norm(self.ffn(x) + x)
+        
+        return x
+
+
+class DecoderBlock(nn.Module):
+    def __init__(self) -> None:
+        super.__init__()
+
+        self.mha = MultiHeadAttention()
+        self.ffn = FeedForward()
+        self.layer_norm = nn.LayerNorm()
+
+
+    def forwar(self, x: Tensor, k: Tensor, v: Tensor) -> Tensor:
+        x = self.layer_norm(self.mha(x, x, x) + x)
+        x = self.layer_norm(self.mha(x, k, v) + x)
+        x = self.layer_norm(self.ffn(x) + x)
+        return x
+
+        
+class Encoder(nn.Module):
+    def __init__(self, n_layer: int) -> None:
+        super.__init__()
+
+        self.n_layer = n_layer
+        self.layers = nn.ModuleList([EncoderBlock() for _ in range(n_layer)])
+
+    def forward(self, x: Tensor) -> None:
+        for layer in self.layers:
+            x = layer(x)
+        
+        return x
+
+
+class Decoder(nn.Module):
+    def __init__(self, n_layer: int) -> None:
+        super.__init__()
+
+        self.n_layer = n_layer
+        self.layers = nn.ModuleList([DecoderBlock() for _ in range(n_layer)])
+
+    def forward(self, x: Tensor, k: Tensor, v: Tensor) -> None:
+        for layer in self.layers:
+            x = layer(x, k, v)
+        
+        return x
+
+
+class Transformer(nn.Module):
+    def __init__(self, n: int) -> None:
+        super().__init__()
+
+        self.h = 8
+        self.d_model = 1024
+        self.layer = 8
+        self.d_k = self.d_v = self.d_model / self.h 
+
+        self.encoder = Encoder()
+        self.decoder = Decoder()
+    
+    def forward(self, x: Tensor) -> None:
+        emb = self.encoder(x)
+        x = self.decoder(x, emb, emb)
+
+        return x
