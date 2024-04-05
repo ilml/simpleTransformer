@@ -19,12 +19,29 @@ def scaled_dot_product_attention(Q: Tensor, K: Tensor, V: Tensor) -> Tensor:
     return output
 
 
+def positional_encoding(seq_len: int, d_model: int) -> Tensor:
+    """
+    return positional encoding matrix for input data
+    """
+    pos = torch.arange(seq_len).unsqueeze(1)
+    i = torch.arange(0, d_model, 2).unsqueeze(0)
+    div = torch.exp(i * (-math.log(1e4)) / d_model)
+
+    pe_even = torch.sin(pos * div)
+    pe_odd = torch.cos(pos * div)
+    pe = torch.stack([pe_even, pe_odd], dim=-1).flatten(-2)
+    
+    return pe.unsqueeze(0)
+
+
+
 class MultiHeadAttention(nn.Module):
     def __init__(self, h: int, d_model: int, d_k: int, d_v: int) -> None:
         super().__init__()
         
         self.h = h
 
+        # we can use nn.Linear here, but use nn.Paramerter in favor of matmul
         self.W_Q = nn.Parameter(torch.empty(h, d_model, d_k))
         self.W_K = nn.Parameter(torch.empty(h, d_model, d_k))
         self.W_V = nn.Parameter(torch.empty(h, d_model, d_v))
@@ -57,9 +74,9 @@ class FeedForward(nn.Module):
 
         self.ffn_1 =  nn.Linear(in_features=d_model, out_features=d_ff, bias=True)
         self.ffn_2 =  nn.Linear(in_features=d_ff, out_features=d_model, bias=True)
-        self.activation = nn.Relu()
+        self.activation = nn.ReLU()
 
-    def forwar(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         x = self.ffn_1(x)
         x = self.activation(x)
         x = self.ffn_2(x)
@@ -68,44 +85,48 @@ class FeedForward(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, h: int, d_model: int, d_k: int, d_v: int, d_ff: int) -> None:
         super().__init__()
 
-        self.mha = MultiHeadAttention()
-        self.ffn = FeedForward()
-        self.layer_norm = nn.LayerNorm()
+        self.mha = MultiHeadAttention(h=h, d_model=d_model, d_k=d_k, d_v=d_v)
+        self.ffn = FeedForward(d_ff=d_ff, d_model=d_model)
+        self.ln1 = nn.LayerNorm(d_model)  
+        self.ln2 = nn.LayerNorm(d_model)  
+        self.dropout = nn.Dropout(0.1) 
 
-    def forwar(self, x: Tensor) -> Tensor:
-        x = self.layer_norm(self.mha(x, x, x) + x)
-        x = self.layer_norm(self.ffn(x) + x)
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.ln1(self.dropout(self.mha(x, x, x)) + x)
+        x = self.ln2(self.dropout(self.ffn(x)) + x)
         
         return x
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self) -> None:
-        super.__init__()
+    def __init__(self, h: int, d_model: int, d_k: int, d_v: int, d_ff: int) -> None:
+        super().__init__()
 
-        self.mha = MultiHeadAttention()
-        self.ffn = FeedForward()
-        self.layer_norm = nn.LayerNorm()
+        self.m_mha = MultiHeadAttention(h=h, d_model=d_model, d_k=d_k, d_v=d_v)
+        self.mha = MultiHeadAttention(h=h, d_model=d_model, d_k=d_k, d_v=d_v)
+        self.ffn = FeedForward(d_ff=d_ff, d_model=d_model)
+        self.ln1 = nn.LayerNorm(d_model)
+        self.ln2 = nn.LayerNorm(d_model)
+        self.ln3 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(0.1) 
 
-
-    def forwar(self, x: Tensor, k: Tensor, v: Tensor) -> Tensor:
-        x = self.layer_norm(self.mha(x, x, x) + x)
-        x = self.layer_norm(self.mha(x, k, v) + x)
-        x = self.layer_norm(self.ffn(x) + x)
+    def forward(self, x: Tensor, k: Tensor, v: Tensor) -> Tensor:
+        x = self.ln1(self.dropout(self.m_mha(x, x, x)) + x)
+        x = self.ln2(self.dropout(self.mha(x, k, v)) + x)
+        x = self.ln3(self.dropout(self.ffn(x)) + x)
         return x
 
         
 class Encoder(nn.Module):
-    def __init__(self, n_layer: int) -> None:
-        super.__init__()
+    def __init__(self, n_layer: int, h: int, d_model: int, d_k: int, d_v: int, d_ff: int) -> None:
+        super().__init__()
 
-        self.n_layer = n_layer
-        self.layers = nn.ModuleList([EncoderBlock() for _ in range(n_layer)])
+        self.layers = nn.ModuleList([EncoderBlock(h=h, d_model=d_model, d_k=d_k, d_v=d_v, d_ff=d_ff) for _ in range(n_layer)])
 
-    def forward(self, x: Tensor) -> None:
+    def forward(self, x: Tensor) -> Tensor:
         for layer in self.layers:
             x = layer(x)
         
@@ -113,13 +134,11 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, n_layer: int) -> None:
-        super.__init__()
+    def __init__(self, n_layer: int, h: int, d_model: int, d_k: int, d_v: int, d_ff: int) -> None:
+        super().__init__()
+        self.layers = nn.ModuleList([DecoderBlock(h=h, d_model=d_model, d_k=d_k, d_v=d_v, d_ff=d_ff) for _ in range(n_layer)])
 
-        self.n_layer = n_layer
-        self.layers = nn.ModuleList([DecoderBlock() for _ in range(n_layer)])
-
-    def forward(self, x: Tensor, k: Tensor, v: Tensor) -> None:
+    def forward(self, x: Tensor, k: Tensor, v: Tensor) -> Tensor:
         for layer in self.layers:
             x = layer(x, k, v)
         
@@ -127,19 +146,32 @@ class Decoder(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, n: int) -> None:
+    def __init__(self, n_layer: int = 6, h: int = 8, d_model: int = 512, d_ff: int = 2048, vocab_size: int = 37000) -> None:
         super().__init__()
 
-        self.h = 8
-        self.d_model = 1024
-        self.layer = 8
-        self.d_k = self.d_v = self.d_model / self.h 
+        d_k = d_v = d_model // h 
+        self.d_model = d_model
 
-        self.encoder = Encoder()
-        self.decoder = Decoder()
+        self.emb = nn.Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
+        self.output_linear = nn.Linear(d_model, vocab_size)
+        self.output_linear.weight = self.emb.weight
+        self.dropout = nn.Dropout(0.1) 
+
+        self.encoder = Encoder(n_layer=n_layer, h=h, d_model=d_model, d_k=d_k, d_v=d_v, d_ff=d_ff)
+        self.decoder = Decoder(n_layer=n_layer, h=h, d_model=d_model, d_k=d_k, d_v=d_v, d_ff=d_ff)
     
-    def forward(self, x: Tensor) -> None:
-        emb = self.encoder(x)
-        x = self.decoder(x, emb, emb)
+    def forward(self, src: Tensor, tgt: Tensor) -> Tensor:
+        src_emb = self.dropout(self.emb(src) * math.sqrt(self.d_model) + positional_encoding(src.shape[1], self.d_model))
+        tgt_emb = self.dropout(self.emb(tgt) * math.sqrt(self.d_model) + positional_encoding(tgt.shape[1], self.d_model))
 
-        return x
+        src_emb = self.encoder(src_emb)
+        output = self.decoder(tgt_emb, src_emb, src_emb)
+        logits = self.output_linear(output)
+        
+        return F.log_softmax(logits, dim=-1)
+        
+if __name__ == "__main__":
+    model = Transformer()
+    print(model)
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Total number of parameters: {total_params}")
