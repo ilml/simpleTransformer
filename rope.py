@@ -15,7 +15,27 @@ def positional_encoding(x):
     return pe
 
 
-    
+
+def precompute_freqs_cis(dim: int, seq_len: int, theta: float = 10000.0): 
+    theta = torch.exp(math.log(1e4) * torch.arange(0, dim, 2)[:dim//2] / dim)
+    m = torch.arange(seq_len)
+    freqs = torch.outer(m, theta).float()
+    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
+    return freqs_cis
+
+
+def apply_rotary_emb(
+    xq: torch.Tensor,
+    xk: torch.Tensor,
+    freqs_cis: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    xq_ = xq.view(*xq.shape[::-1], -1, 2)
+    xk_ = xq.view(*xk.shape[::-1], -1, 2)
+
+    xq_ = xq_.view_as_complex()
+    xk_ = xk_.view_as_complex()
+
+
 
 
 if __name__ == "__main__":
