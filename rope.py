@@ -39,6 +39,8 @@ def apply_rotary_emb(
     
     return xq_out, xk_out
 
+ 
+
 
 if __name__ == "__main__":
     """
